@@ -1,0 +1,1 @@
+ALTER TABLE answers ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0 CHECK(skipped IN (0,1));

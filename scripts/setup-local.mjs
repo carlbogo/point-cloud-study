@@ -58,9 +58,10 @@ c=sqlite3.connect(':memory:')
 for p in sorted(pathlib.Path('migrations').glob('*.sql')): c.executescript(p.read_text())
 c.executescript(pathlib.Path('data/seed.sql').read_text())
 missing=[]
-for dataset in ['mnist','fashion','cifar10']:
- for level,count in [(9,3),(11,2),(13,1),(17,1)]:
-  available=c.execute('SELECT COUNT(DISTINCT source_index) FROM stimuli WHERE active=1 AND dataset=? AND difficulty=?',(dataset,level)).fetchone()[0]
+classes={'mnist':list('123456789'),'fashion':['T-shirt top','Bag','Dress','Trouser','Sneaker'],'quickdraw':['guitar','fish','butterfly','tree','umbrella','bicycle']}
+for dataset,labels in classes.items():
+ for level,count in [(9,2),(11,2),(13,2),(17,2)]:
+  available=c.execute('SELECT COUNT(DISTINCT source_index) FROM stimuli WHERE active=1 AND dataset=? AND difficulty=? AND lower(label) IN ('+','.join('?' for _ in labels)+')',(dataset,level,*[label.lower() for label in labels])).fetchone()[0]
   if available<count: missing.append(f'{dataset} d={level}')
 if missing: sys.exit('Incomplete full-study collection: '+', '.join(missing)+'. Import the study ZIP, or choose npm run setup:demo explicitly.')
 `,
@@ -85,7 +86,7 @@ const hash = (key) => createHash('sha256').update(key).digest('hex');
 // Only hashes enter SQL / Wrangler logs. Credentials stay in ignored local files.
 let sql = `INSERT INTO team_links(id,token_hash) VALUES('${team.id}','${hash(team.token)}') ON CONFLICT(id) DO NOTHING;\n`;
 if (!values.demo)
-  sql += `INSERT INTO invitations(id,token_hash,dataset,difficulty,plan_id,answer_mode) SELECT '${respondent.id}','${hash(respondent.token)}','mixed',0,'study-3211-v2',answer_mode FROM study_settings WHERE id=1;\n`;
+  sql += `INSERT INTO invitations(id,token_hash,dataset,difficulty,plan_id,answer_mode) SELECT '${respondent.id}','${hash(respondent.token)}','mixed',0,'study-2222-v4',answer_mode FROM study_settings WHERE id=1;\n`;
 writeFileSync('data/local-access.sql', sql);
 run(
   process.execPath,

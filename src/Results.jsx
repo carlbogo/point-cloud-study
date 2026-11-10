@@ -16,9 +16,6 @@ export default function Results({
   onVerify,
 }) {
   const skipped = rows.filter((row) => row.skipped).length;
-  const review = rows.filter((row) => !row.skipped && row.correct === null).length;
-  const scored = rows.filter((row) => !row.skipped && row.correct !== null);
-  const correct = scored.filter((row) => row.correct).length;
   const mean = rows.length
     ? (rows.reduce((sum, row) => sum + row.response_time_ms, 0) / rows.length / 1000).toFixed(1)
     : '—';
@@ -36,28 +33,14 @@ export default function Results({
           <dt>Skipped</dt>
           <dd>{skipped}</dd>
         </div>
-        <div>
-          <dt>Awaiting review</dt>
-          <dd>{review}</dd>
-        </div>
       </dl>
       <div className="results-grid">
-        <div className="result-metric">
-          <strong>{scored.length ? `${Math.round((correct / scored.length) * 100)}%` : '—'}</strong>
-          <span>Scored accuracy</span>
-          <small>
-            {correct} correct out of {scored.length} automatically scored
-          </small>
-        </div>
         <div className="result-metric">
           <strong>{mean} s</strong>
           <span>Mean response time</span>
           <small>Includes answered and skipped images</small>
         </div>
       </div>
-      <p className="results-explanation muted">
-        Accuracy excludes skipped images and answers awaiting review.
-      </p>
       {team && (
         <section className="storage-receipt" aria-label="Storage verification">
           <div className="storage-heading">

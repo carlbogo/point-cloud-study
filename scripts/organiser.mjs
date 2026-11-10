@@ -25,9 +25,9 @@ async function main() {
     forcePrompt = args.includes('--prompt');
   const local = args.includes('--local');
   const [command, argument] = args.filter((a) => !['--prompt', '--local'].includes(a));
-  if (!['invite', 'export', 'team-link', 'mode'].includes(command))
+  if (!['invite', 'export', 'team-link'].includes(command))
     throw new Error(
-      'Usage: node scripts/organiser.mjs team-link [--prompt] | invite study-3211-v2 [--prompt] | mode hybrid|choices [--prompt] | export /private/path/results.json',
+      'Usage: node scripts/organiser.mjs team-link [--prompt] | invite study-2222-v4 [--prompt] | export /private/path/results.json',
     );
   let localConfig = {};
   if (local) {
@@ -84,13 +84,9 @@ async function main() {
     console.log((await call('/api/admin/team-links', {})).url);
     return;
   }
-  if (command === 'mode') {
-    console.log(await call('/api/team/settings', { answer_mode: argument }));
-    return;
-  }
   if (command === 'invite')
     console.log(
-      (await call('/api/admin/invitations', { condition: argument || 'study-3211-v2' })).url,
+      (await call('/api/admin/invitations', { condition: argument || 'study-2222-v4' })).url,
     );
   else {
     let after = '',

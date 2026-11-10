@@ -13,8 +13,6 @@ export async function isTeam(db: D1Database, key: unknown) {
       .first(),
   );
 }
-export async function settings(db: D1Database) {
-  return (await db
-    .prepare('SELECT answer_mode,updated_at FROM study_settings WHERE id=1')
-    .first<{ answer_mode: 'hybrid' | 'choices'; updated_at: string }>())!;
+export async function settings(_db: D1Database) {
+  return { answer_mode: 'hybrid' as const };
 }

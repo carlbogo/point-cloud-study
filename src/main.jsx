@@ -6,18 +6,10 @@ import { parseAccessLink } from './access-links';
 import { api, loadSession, storeSession, exportFile, csv, SESSION_KEY } from './api';
 import './style.css';
 
-const modeName = (mode) =>
-  mode === 'choices'
-    ? 'Answer choices for every image'
-    : mode === 'hybrid'
-      ? 'MNIST + Fashion choices; CIFAR-10 open answers'
-      : 'Original response format';
 function App() {
   const [config, setConfig] = useState(null),
-    [condition, setCondition] = useState('study-3211-v2');
-  const [role, setRole] = useState('respondent'),
-    [mode, setMode] = useState('hybrid'),
-    [draftMode, setDraftMode] = useState('hybrid');
+    [condition, setCondition] = useState('study-2222-v4');
+  const [role, setRole] = useState('respondent');
   const [alias, setAlias] = useState(''),
     [kind, setKind] = useState('human'),
     [screen, setScreen] = useState('home');
@@ -103,15 +95,13 @@ function App() {
         const cfg = await api('/api/config');
         if (cancelled || bootVersion !== generation.current) return;
         setConfig(cfg);
-        setCondition(cfg.conditions.find((c) => c.ready)?.id || 'study-3211-v2');
+        setCondition(cfg.conditions.find((c) => c.ready)?.id || 'study-2222-v4');
         if (saved.invite || saved.team_key) {
           const access = await api('/api/access', { body: saved });
           if (cancelled || bootVersion !== generation.current) return;
           setAccessValid(true);
           setInviteUsed(Boolean(access.used));
           setRole(access.role);
-          setMode(access.answer_mode);
-          setDraftMode(access.answer_mode);
           if (access.plan_id) setCondition(access.plan_id);
         }
       } catch (e) {
@@ -179,7 +169,7 @@ function App() {
       if (session.current === currentSession) setReceiptBusy(false);
     }
   }
-  async function showState(next) {
+  async function showState(next, beginBlock = false) {
     const version = ++generation.current;
     activeTrial.current = null;
     locked.current = true;
@@ -209,6 +199,10 @@ function App() {
     }
     if (!next.trial?.id || !next.trial.image)
       throw new Error('The current image could not be loaded. Please resume your session.');
+    if (!beginBlock && !session.current.introducedBlocks?.includes(next.dataset)) {
+      setScreen('block-intro');
+      return;
+    }
     const response = await fetch(next.trial.image, {
       headers: { Authorization: `Bearer ${session.current.token}` },
     });
@@ -219,6 +213,23 @@ function App() {
     activeTrial.current = next.trial.id;
     setImage(blob.current);
     setScreen('play');
+  }
+  async function beginBlock() {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      session.current.introducedBlocks = [
+        ...(session.current.introducedBlocks || []),
+        state.dataset,
+      ];
+      persist();
+      await showState(state, true);
+    } catch (e) {
+      report(e);
+    } finally {
+      setBusy(false);
+    }
   }
   async function startRun() {
     if (busy || booting) return;
@@ -252,7 +263,6 @@ function App() {
         },
       });
       s.run_id = next.run_id;
-      s.answer_mode = next.answer_mode;
       persist();
       if (s.pending) await sendPending();
       else await showState(next);
@@ -434,25 +444,6 @@ function App() {
     setTruncated(false);
     setScreen('home');
   }
-  async function saveMode() {
-    setBusy(true);
-    setError('');
-    setNotice('');
-    try {
-      const saved = await api('/api/team/settings', {
-        token: context.current.team_key,
-        body: { answer_mode: draftMode },
-      });
-      setMode(saved.answer_mode);
-      setNotice(
-        'Saved. New invitation links and test runs use this format. Existing runs keep their original format.',
-      );
-    } catch (e) {
-      report(e);
-    } finally {
-      setBusy(false);
-    }
-  }
   async function copyRespondentLink() {
     try {
       await navigator.clipboard.writeText(respondentLink);
@@ -467,7 +458,7 @@ function App() {
     try {
       const data = await api('/api/team/invitations', {
         token: context.current.team_key,
-        body: { condition: 'study-3211-v2' },
+        body: { condition: 'study-2222-v4' },
       });
       setRespondentLink(data.url);
       setCopyNotice('');
@@ -498,8 +489,7 @@ function App() {
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, [screen, ready, busy, selected, state]);
-  const pending = Boolean(session.current?.pending),
-    dirty = mode !== draftMode;
+  const pending = Boolean(session.current?.pending);
   const canRestart = role === 'team' || (config?.public_runs && !context.current.invite);
   const currentCondition = config?.conditions.find((c) => c.id === condition);
   const choice = state?.trial?.answer_type === 'digit' || state?.trial?.answer_type === 'choice';
@@ -509,7 +499,7 @@ function App() {
         <strong className="brand">Constellation Study</strong>
         <span className="muted">{role === 'team' ? 'Team workspace' : 'Recognition study'}</span>
       </header>
-      <main className="container">
+      <main className={`container ${screen === 'play' ? '' : 'container-narrow'}`}>
         {error && (
           <div role="alert" className="feedback-box error">
             {error}
@@ -542,32 +532,12 @@ function App() {
               <section className="card setup-card top20" aria-label="Team settings">
                 <div className="eyebrow">Team only</div>
                 <h2>Study settings</h2>
-                <label className="label" htmlFor="answer-mode">
-                  Response format
-                </label>
-                <select
-                  id="answer-mode"
-                  className="text-input"
-                  value={draftMode}
-                  disabled={busy}
-                  onChange={(e) => setDraftMode(e.target.value)}
-                >
-                  <option value="hybrid">MNIST + Fashion choices; CIFAR-10 open answers</option>
-                  <option value="choices">Answer choices for every image</option>
-                </select>
                 <p className="muted">
-                  Settings apply to new invitation links and test runs. Respondents cannot change
-                  the format.
+                  MNIST and FashionMNIST use answer choices. Quickdraw uses written answers in
+                  English.
                 </p>
                 <div className="action-row wrap">
-                  <button className="button primary" disabled={busy || !dirty} onClick={saveMode}>
-                    Save settings
-                  </button>
-                  <button
-                    className="button secondary"
-                    disabled={busy || dirty}
-                    onClick={createInvite}
-                  >
+                  <button className="button secondary" disabled={busy} onClick={createInvite}>
                     Create respondent link
                   </button>
                 </div>
@@ -624,9 +594,10 @@ function App() {
                 shape. Drawing is optional.
               </p>
               <p className="muted">
-                The study has 21 images and progresses from easier to harder images, starting with
-                digits. After submitting or skipping an image, you will see the expected answer and
-                can continue. You cannot change an answer after revealing it.
+                The study has 24 images in three blocks: MNIST, FashionMNIST and Quickdraw. Each
+                block has eight images, progressing from easier to harder. Each block starts with
+                instructions. Answers are saved and locked after submission or skipping. Correct
+                answers are not shown.
               </p>
               <p className="muted">
                 We save answers, response times, drawing actions, answer changes and page
@@ -681,11 +652,6 @@ function App() {
                       ))}
                     </div>
                   )}
-                  {role === 'team' && (
-                    <p className="muted">
-                      Current format: {modeName(mode)}. Test runs are marked as team data.
-                    </p>
-                  )}
                   {context.current.invite && accessValid && inviteUsed && !hasSession && (
                     <p role="alert" className="warning-text">
                       This single-use invitation has already been started in another browser. Return
@@ -705,7 +671,6 @@ function App() {
                       !config ||
                       ((context.current.invite || context.current.team_key) && !accessValid) ||
                       (context.current.invite && inviteUsed && !hasSession) ||
-                      dirty ||
                       (!context.current.invite &&
                         role !== 'team' &&
                         (!config.public_runs || !currentCondition?.ready))
@@ -734,6 +699,40 @@ function App() {
             )}
           </section>
         )}
+        {screen === 'block-intro' && (
+          <section className="card setup-card top20">
+            <div className="eyebrow">
+              Block {['mnist', 'fashion', 'quickdraw'].indexOf(state.dataset) + 1} of 3
+            </div>
+            <h1>
+              {{ mnist: 'MNIST', fashion: 'FashionMNIST', quickdraw: 'Quickdraw' }[state.dataset]}
+            </h1>
+            <p>
+              This block contains eight images: two easy, two medium, two hard and two very hard, in
+              that order.
+            </p>
+            <p>
+              {state.dataset === 'quickdraw'
+                ? 'Type what you recognise in English. There are no answer choices.'
+                : 'Select the digit or item that best matches the image from the answer choices.'}
+            </p>
+            {state.dataset !== 'quickdraw' && (
+              <p className="muted">
+                Classes to expect:{' '}
+                {state.dataset === 'mnist'
+                  ? 'digits 1–9'
+                  : 'T-shirt, bag, dress, trousers and sneakers'}
+                .
+              </p>
+            )}
+            <p className="muted">
+              Drawing lines is optional. You can skip an image. Correct answers are not shown.
+            </p>
+            <button className="button primary wide top20" disabled={busy} onClick={beginBlock}>
+              {busy ? 'Loading…' : 'Begin block'}
+            </button>
+          </section>
+        )}
         {screen === 'play' && (
           <section className="play-layout top20">
             <div className="card stimulus-card">
@@ -745,11 +744,12 @@ function App() {
                   {state?.trial?.ordinal ||
                     session.current?.last_feedback?.ordinal ||
                     session.current?.pending?.ordinal}{' '}
-                  / {state?.trial_count || 21}
+                  / {state?.trial_count || 24}
                 </span>
                 <span>
-                  {{ mnist: 'MNIST', fashion: 'Fashion', cifar10: 'CIFAR-10' }[state?.dataset] ||
-                    ''}{' '}
+                  {{ mnist: 'MNIST', fashion: 'FashionMNIST', quickdraw: 'Quickdraw' }[
+                    state?.dataset
+                  ] || ''}{' '}
                   {state?.difficulty ? `d = ${state.difficulty}` : ''}
                 </span>
               </div>
@@ -816,22 +816,9 @@ function App() {
               )}
               {feedback ? (
                 <>
-                  <div
-                    role="status"
-                    className={`feedback-box ${feedback.skipped || feedback.correct === null ? '' : feedback.correct ? 'success' : 'error'}`}
-                  >
-                    {feedback.skipped
-                      ? 'Skipped.'
-                      : feedback.correct
-                        ? 'Correct!'
-                        : feedback.correct === null
-                          ? 'Saved for review.'
-                          : `Your answer: ${feedback.answer}.`}{' '}
-                    Expected answer: {feedback.correct_answer}.
+                  <div role="status" className="feedback-box">
+                    {feedback.skipped ? 'Image skipped.' : 'Answer saved.'}
                   </div>
-                  {feedback.grading_method === 'synonyms-v1' && (
-                    <p className="muted">Your wording was accepted as a matching answer.</p>
-                  )}
                   <p className="muted">Saved to the study server. This answer is locked.</p>
                   <button className="button primary wide top20" disabled={busy} onClick={next}>
                     {busy ? 'Loading…' : 'Continue'}
@@ -872,7 +859,7 @@ function App() {
                     disabled={!ready || busy || locked.current}
                     onClick={() => submit(true)}
                   >
-                    Skip and show answer
+                    Skip image
                   </button>
                 </>
               )}

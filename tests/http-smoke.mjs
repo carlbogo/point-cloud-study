@@ -23,7 +23,7 @@ const call = (path, body, method) =>
 const config = await (await call('/api/config')).json();
 assert.ok(config.conditions.some((condition) => condition.ready));
 const condition =
-  config.conditions.find((c) => c.id === 'study-3211-v2' && c.ready)?.id || 'mnist-preview-v1';
+  config.conditions.find((c) => c.id === 'study-2222-v4' && c.ready)?.id || 'mnist-preview-v1';
 let state = await (
   await call('/api/runs', {
     condition,
@@ -56,21 +56,27 @@ for (let n = 1; n <= count; n++) {
   };
   const response = await call(`/api/runs/${run}/trials/${state.trial.id}/answer`, body);
   assert.equal(response.status, 200);
-  assert.ok((await response.json()).correct_answer);
+  assert.equal('correct_answer' in (await response.json()), false);
   state = await (await call('/api/runs/' + run)).json();
 }
 assert.equal(state.complete, true);
 const results = await (await call(`/api/runs/${run}/results`)).json();
 assert.equal(results.rows.length, count);
+assert.ok(results.rows.every((row) => !('correct_answer' in row) && !('correct' in row)));
+if (count === 24)
+  assert.deepEqual(
+    results.rows.map((row) => row.dataset),
+    ['mnist', 'fashion', 'quickdraw'].flatMap((dataset) => Array(8).fill(dataset)),
+  );
 for (const path of ['/stimuli/manifest.json', '/%73timuli/manifest.json', '/data/seed.sql'])
   assert.equal((await call(path)).status, 404);
-if (count === 21)
-  for (const dataset of ['mnist', 'fashion', 'cifar10'])
+if (count === 24)
+  for (const dataset of ['mnist', 'fashion', 'quickdraw'])
     assert.deepEqual(
       [9, 11, 13, 17].map(
         (d) => results.rows.filter((r) => r.dataset === dataset && r.difficulty === d).length,
       ),
-      [3, 2, 1, 1],
+      [2, 2, 2, 2],
     );
 console.log(
   `Real Worker + local D1: ${count}-trial run, four-level quotas, images, feedback, results and private-file checks passed.`,

@@ -1,30 +1,8 @@
 export type AnswerMode = 'hybrid' | 'choices' | 'legacy';
 export const options: Record<string, string[]> = {
   mnist: ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
-  fashion: [
-    'T-shirt top',
-    'Trouser',
-    'Pullover',
-    'Dress',
-    'Coat',
-    'Sandal',
-    'Shirt',
-    'Sneaker',
-    'Bag',
-    'Ankle boot',
-  ],
-  cifar10: [
-    'airplane',
-    'automobile',
-    'bird',
-    'cat',
-    'deer',
-    'dog',
-    'frog',
-    'horse',
-    'ship',
-    'truck',
-  ],
+  fashion: ['T-shirt', 'Bag', 'Dress', 'Trousers', 'Sneakers'],
+  quickdraw: ['guitar', 'fish', 'butterfly', 'tree', 'umbrella', 'bicycle'],
 };
 export const normalise = (answer: string) =>
   answer
@@ -35,6 +13,22 @@ export const normalise = (answer: string) =>
     .replace(/[.,!?;:]/g, '')
     .replace(/\s+/g, ' ')
     .replace(/^(a|an|the) /, '');
+// Dataset metadata retains the original FashionMNIST labels. Map these to the
+// participant-facing class names without changing historical ground truth.
+export function className(label: string) {
+  const value = normalise(label);
+  return (
+    (
+      { 't shirt top': 't shirt', trouser: 'trousers', sneaker: 'sneakers' } as Record<
+        string,
+        string
+      >
+    )[value] ?? value
+  );
+}
+export function allowedClass(dataset: string, label: string) {
+  return (options[dataset] ?? []).some((option) => className(option) === className(label));
+}
 const synonyms: Record<string, string[]> = {
   't shirt top': [
     't shirt',
@@ -64,7 +58,17 @@ const synonyms: Record<string, string[]> = {
   ],
   bag: ['bag', 'bags', 'handbag', 'handbags', 'purse'],
   'ankle boot': ['ankle boot', 'ankle boots', 'boot', 'boots', 'bootie', 'booties'],
-  airplane: ['airplane', 'airplanes', 'aeroplane', 'aeroplanes', 'plane', 'planes', 'aircraft'],
+  airplane: [
+    'airplane',
+    'airplanes',
+    'aeroplane',
+    'aeroplanes',
+    'plane',
+    'planes',
+    'aircraft',
+    'air plane',
+    'air planes',
+  ],
   automobile: ['automobile', 'automobiles', 'car', 'cars', 'auto', 'motorcar'],
   bird: ['bird', 'birds'],
   cat: ['cat', 'cats'],
@@ -74,10 +78,26 @@ const synonyms: Record<string, string[]> = {
   horse: ['horse', 'horses'],
   ship: ['ship', 'ships', 'boat', 'boats'],
   truck: ['truck', 'trucks', 'lorry', 'lorries'],
+  bicycle: ['bicycle', 'bicycles', 'bike', 'bikes'],
+  butterfly: ['butterfly', 'butterflies'],
+  fish: ['fish', 'fishes'],
+  guitar: ['guitar', 'guitars'],
+  sailboat: [
+    'sailboat',
+    'sailboats',
+    'sailing boat',
+    'sailing boats',
+    'sail boat',
+    'sail boats',
+    'sailing ship',
+    'boat',
+  ],
+  tree: ['tree', 'trees'],
+  umbrella: ['umbrella', 'umbrellas'],
 };
-export function answerType(dataset: string, mode: AnswerMode) {
+export function answerType(dataset: string, _mode: AnswerMode) {
   if (dataset === 'mnist') return 'digit';
-  return mode === 'choices' || (mode === 'hybrid' && dataset === 'fashion') ? 'choice' : 'text';
+  return dataset === 'fashion' ? 'choice' : 'text';
 }
 export function grade(
   dataset: string,
@@ -88,10 +108,13 @@ export function grade(
 ): { correct: number | null; method: string } {
   if (skipped) return { correct: null, method: 'skipped' };
   if (answerType(dataset, mode) !== 'text')
-    return { correct: Number(normalise(answer) === normalise(label)), method: 'choice-v1' };
+    return { correct: Number(className(answer) === className(label)), method: 'choice-v1' };
   const expected = normalise(label),
     actual = normalise(answer);
-  if (actual === expected || (synonyms[expected] ?? []).includes(actual))
+  if (
+    actual === expected ||
+    (synonyms[expected] ?? []).some((synonym) => normalise(synonym) === actual)
+  )
     return { correct: 1, method: 'synonyms-v1' };
   // Unknown wording stays available for manual review rather than an automatic wrong mark.
   return { correct: null, method: 'review-v1' };

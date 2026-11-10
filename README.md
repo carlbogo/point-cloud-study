@@ -1,8 +1,8 @@
 # Constellation Study
 
 A browser-based recognition study for people and language models. Identify shapes
-in point-cloud images, optionally draw lines, and submit or skip each image to
-see the expected answer.
+in point-cloud images, optionally draw lines, and submit or skip each image.
+Correct answers and correctness feedback are not shown to participants.
 
 **Stack:** React + Vite, TypeScript Cloudflare Worker, and D1 (SQLite).
 The Worker serves the website and API together.
@@ -22,9 +22,9 @@ npm run dev:api
 ```
 
 Setup prints a **local team link** and a **local respondent link**. Open the team
-link, not just the hostname. It offers the same 21-image study, response modes,
+link, not just the hostname. It offers the same 24-image study, block introductions,
 link generator, restarts, drawing, skips and storage checks as the cloud version.
-The respondent link starts one run with its mode fixed, just like in production.
+The respondent link starts one run with the fixed response format, just like in production.
 
 If the data ZIP is elsewhere, use:
 
@@ -61,12 +61,15 @@ local study. Missing real data does not silently substitute synthetic images.
 
 ## Study behaviour
 
-- 21 images: seven each from MNIST, Fashion-MNIST and CIFAR-10.
-- Difficulty increases through d = 9, 11, 13, 17, with 3–2–1–1 images per dataset.
-  The first three images are MNIST d = 9. Original images never repeat within a run.
-- **Hybrid:** MNIST and Fashion choices, CIFAR-10 open answers.
-  **Choices:** predefined choices for every dataset.
-- Drawing, undo, clear and skip; responses lock before the expected answer appears.
+- 24 images in three ordered blocks: MNIST → FashionMNIST → Quickdraw.
+- Each block has eight images: 2–2–2–2 at d = 9, 11, 13, 17. Difficulty increases
+  within each block. Original images never repeat within a run.
+- MNIST (digits 1–9) and FashionMNIST use answer choices. Quickdraw uses free text
+  in English. There is one response format, with no mode setting.
+- A page before each block explains its response format and image count.
+  MNIST and FashionMNIST list their classes; Quickdraw classes are not disclosed.
+- Drawing, undo, clear and skip remain available. Saved responses are locked;
+  answers, correctness and scores are withheld from participants and their exports.
 - Answers, timings and drawing events are saved. Known synonyms are accepted;
   other open answers remain available for review. Skips remain separately marked.
 
@@ -80,7 +83,7 @@ Ask the organiser for the dataset separately. Imported data, generated images,
 secrets and local databases are excluded from Git.
 
 Use square PNGs and a CSV with `image_path,dataset,label,difficulty,source_index`.
-Dataset names are `mnist`, `fashion` and `cifar10`; MNIST uses labels 1–9.
+Dataset names are `mnist`, `fashion` and `quickdraw`; MNIST uses labels 1–9.
 Object labels must match the predefined categories in `worker/grading.ts`.
 The importer also handles `fashion_mnist`, `label_name`, and the supplied
 `generated_constellations/` path prefix. Keep source IDs stable across levels.
@@ -94,6 +97,22 @@ Import complete collections before collecting responses. `data/seed.sql` holds
 the private answer key and generation metadata. Published PNG filenames are
 opaque and image metadata is stripped. Do not run `prepare:demo` over an imported
 study unless you intend to switch its active collection to synthetic images.
+
+To replace an existing CIFAR-10 collection with the supplied Quickdraw images:
+
+```sh
+python3 scripts/import-quickdraw.py /path/to/quickdraw
+npm run data:export
+npm run setup:local
+```
+
+Quickdraw expects the supplied `metadata.csv` and `d09`, `d11`, `d13`, `d17`
+folders. The active Quickdraw classes are guitar, fish, butterfly, tree, umbrella and bicycle.
+FashionMNIST is restricted to T-shirt, bag, dress, trousers and sneakers.
+Other imported classes are excluded by the server when selecting a run. The new private ZIP replaces the previous dataset package.
+Historical runs and their stimuli are retained. Unused old full-study invitations
+move to the new protocol when migrations 0006–0007 is applied; started runs keep their
+original sequence. Use a new team test run to try the updated protocol.
 
 ## Team and respondent links
 
@@ -114,10 +133,10 @@ Owners can generate links from the terminal:
 
 ```sh
 node scripts/organiser.mjs team-link --prompt
-node scripts/organiser.mjs invite study-3211-v2 --prompt
+node scripts/organiser.mjs invite study-2222-v4 --prompt
 # Local instance: reads the private local key and URL automatically
 node scripts/organiser.mjs team-link --local
-node scripts/organiser.mjs invite study-3211-v2 --local
+node scripts/organiser.mjs invite study-2222-v4 --local
 ```
 
 Enter the same `ADMIN_TOKEN` stored in Cloudflare. Alternatively save it in private
@@ -164,7 +183,7 @@ Team completion pages include **Storage verification**, a run ID and a fresh
 node scripts/organiser.mjs export /private/path/results.json --prompt
 ```
 
-Exports contain raw answers, telemetry, mode, audience and grading method.
+Exports contain raw answers, telemetry, protocol, audience and grading method.
 Participants can export their own completed run as CSV, including its `run_id`.
 Refreshing before submission loses that image's unsent drawing and restarts its
 client timer. Submitted pending answers are retained for retry. Clearing browser

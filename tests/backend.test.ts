@@ -16,7 +16,9 @@ function setup(publicRuns = 'false') {
   sqlite.exec(readFileSync('migrations/0003_stimulus_metadata.sql', 'utf8'));
   sqlite.exec(readFileSync('migrations/0004_skipped_answers.sql', 'utf8'));
   sqlite.exec(readFileSync('migrations/0005_modes_and_team.sql', 'utf8'));
-  for (const dataset of ['mnist', 'fashion', 'cifar10'])
+  sqlite.exec(readFileSync('migrations/0006_quickdraw_study.sql', 'utf8'));
+  sqlite.exec(readFileSync('migrations/0007_balanced_blocks.sql', 'utf8'));
+  for (const dataset of ['mnist', 'fashion', 'quickdraw'])
     for (const difficulty of DIFFICULTIES)
       for (let i = 0; i < 12; i++) {
         sqlite
@@ -117,7 +119,7 @@ const submission = (answer = '1') => ({
   },
 });
 
-test('full plan has 21 images with 3–2–1–1 per dataset and no repeated originals', () => {
+test('full plan has 24 images with 2–2–2–2 per dataset and no repeated originals', () => {
   const pool = plans[0].datasets.flatMap((dataset) =>
     DIFFICULTIES.flatMap((difficulty) =>
       Array.from(
@@ -127,7 +129,7 @@ test('full plan has 21 images with 3–2–1–1 per dataset and no repeated ori
             id: `${dataset}-${difficulty}-${i}`,
             dataset,
             difficulty,
-            label: String((i % 9) + 1),
+            label: options[dataset][i % options[dataset].length],
             source_index: String(i),
             exposures: i < 9 ? 0 : 10,
           }) as Stimulus,
@@ -136,22 +138,20 @@ test('full plan has 21 images with 3–2–1–1 per dataset and no repeated ori
   );
   for (let n = 0; n < 40; n++) {
     const chosen = samplePlan(pool, plans[0]);
-    assert.equal(chosen.length, 21);
-    assert.ok(chosen.slice(0, 3).every((s) => s.dataset === 'mnist' && s.difficulty === 9));
-    assert.ok(chosen.slice(3).every((s) => s.dataset !== 'mnist' || s.difficulty !== 9));
-    for (let i = 1; i < chosen.length; i++)
-      assert.ok(chosen[i].difficulty >= chosen[i - 1].difficulty);
+    assert.equal(chosen.length, 24);
     assert.deepEqual(
-      DIFFICULTIES.map((d) => chosen.filter((s) => s.difficulty === d).length),
-      [9, 6, 3, 3],
+      chosen.map((s) => s.dataset),
+      plans[0].datasets.flatMap((d) => Array(8).fill(d)),
     );
     for (const dataset of plans[0].datasets) {
       const items = chosen.filter((s) => s.dataset === dataset);
-      assert.equal(items.length, 7);
-      assert.equal(new Set(items.map((s) => s.source_index)).size, 7);
+      assert.equal(items.length, 8);
+      for (let i = 1; i < items.length; i++)
+        assert.ok(items[i].difficulty >= items[i - 1].difficulty);
+      assert.equal(new Set(items.map((s) => s.source_index)).size, 8);
       assert.deepEqual(
         DIFFICULTIES.map((d) => items.filter((s) => s.difficulty === d).length),
-        [3, 2, 1, 1],
+        [2, 2, 2, 2],
       );
     }
   }
@@ -166,9 +166,9 @@ test('full plan has 21 images with 3–2–1–1 per dataset and no repeated ori
 test('private sessions: no answer leaks; one-use invitation; retries do not rewrite answers; mixed-dataset run export', async () => {
   const { sqlite, env, request } = setup();
   assert.equal((await request('/api/admin/export')).status, 401);
-  assert.equal((await request('/api/runs', secret(), { condition: 'study-3211-v2' })).status, 403);
+  assert.equal((await request('/api/runs', secret(), { condition: 'study-2222-v4' })).status, 403);
   const invitation = (await (
-    await request('/api/admin/invitations', env.ADMIN_TOKEN, { condition: 'study-3211-v2' })
+    await request('/api/admin/invitations', env.ADMIN_TOKEN, { condition: 'study-2222-v4' })
   ).json()) as any;
   const invite = linkToken(invitation.url);
   const token = secret();
@@ -183,7 +183,7 @@ test('private sessions: no answer leaks; one-use invitation; retries do not rewr
   const first = state.trial.id;
   assert.equal((await request('/api/runs/' + runId, secret())).status, 404);
   const count = sqlite.prepare('SELECT COUNT(*) AS n FROM trials WHERE run_id=?').get(runId) as any;
-  assert.equal(count.n, 21);
+  assert.equal(count.n, 24);
   assert.deepEqual(Object.keys(state.trial).sort(), [
     'answer_type',
     'id',
@@ -217,11 +217,11 @@ test('private sessions: no answer leaks; one-use invitation; retries do not rewr
     409,
   );
   let previousDifficulty = 0;
-  for (let ordinal = 1; ordinal <= 21; ordinal++) {
+  for (let ordinal = 1; ordinal <= 24; ordinal++) {
     assert.equal(state.trial.ordinal, ordinal);
-    assert.ok(state.difficulty >= previousDifficulty);
+    if ((ordinal - 1) % 8 !== 0) assert.ok(state.difficulty >= previousDifficulty);
     previousDifficulty = state.difficulty;
-    if (ordinal <= 3) {
+    if (ordinal <= 2) {
       assert.equal(state.dataset, 'mnist');
       assert.equal(state.difficulty, 9);
     }
@@ -244,8 +244,9 @@ test('private sessions: no answer leaks; one-use invitation; retries do not rewr
     const saved = await request(endpoint + '/answer', token, body);
     assert.equal(saved.status, 200);
     const feedback = (await saved.json()) as any;
-    assert.ok(feedback.correct_answer);
-    if (state.trial.answer_type === 'text') assert.equal(feedback.correct, null);
+    assert.equal('correct_answer' in feedback, false);
+    assert.equal('correct' in feedback, false);
+
     const replay = await request(endpoint + '/answer', token, body);
     assert.equal(replay.status, 200);
     assert.deepEqual(await replay.json(), feedback);
@@ -260,22 +261,22 @@ test('private sessions: no answer leaks; one-use invitation; retries do not rewr
   assert.equal((await request(`/api/runs/${runId}/storage`)).status, 401);
   assert.equal((await request(`/api/runs/${runId}/storage`, secret())).status, 404);
   const receipt = (await (await request(`/api/runs/${runId}/storage`, token)).json()) as any;
-  assert.equal(receipt.saved_count, 21);
-  assert.equal(receipt.expected_count, 21);
+  assert.equal(receipt.saved_count, 24);
+  assert.equal(receipt.expected_count, 24);
   assert.equal(receipt.complete, true);
   assert.ok(receipt.last_saved_at);
   assert.equal(receipt.run_id, runId);
   assert.equal(receipt.environment, 'test');
   const results = (await (await request(`/api/runs/${runId}/results`, token)).json()) as any;
-  assert.equal(results.rows.length, 21);
-  assert.equal((sqlite.prepare('SELECT COUNT(*) AS n FROM answers').get() as any).n, 21);
+  assert.equal(results.rows.length, 24);
+  assert.equal((sqlite.prepare('SELECT COUNT(*) AS n FROM answers').get() as any).n, 24);
   const exported = (await (await request('/api/admin/export', env.ADMIN_TOKEN)).json()) as any;
-  assert.equal(exported.rows.length, 21);
+  assert.equal(exported.rows.length, 24);
   assert.ok(exported.rows[0].telemetry.events.length);
   assert.ok(exported.rows[0].ground_truth);
   assert.deepEqual(
     new Set(exported.rows.map((r: any) => r.dataset)),
-    new Set(['mnist', 'fashion', 'cifar10']),
+    new Set(['mnist', 'fashion', 'quickdraw']),
   );
   const csv = await (await request('/api/admin/export?format=csv', env.ADMIN_TOKEN)).text();
   assert.ok(csv.includes("'=spreadsheet"));
@@ -345,7 +346,7 @@ test('organiser authentication accepts the configured key independently of sessi
   sqlite.close();
 });
 
-test('skip reveals the answer, is idempotent, advances and cannot be replaced', async () => {
+test('skip does not reveal the answer, is idempotent, advances and cannot be replaced', async () => {
   const { sqlite, request } = setup('true');
   const token = secret();
   const state = (await (
@@ -362,8 +363,9 @@ test('skip reveals the answer, is idempotent, advances and cannot be replaced', 
   assert.equal(response.status, 200);
   const feedback = (await response.json()) as any;
   assert.equal(feedback.skipped, 1);
-  assert.equal(feedback.correct, null);
-  assert.ok(feedback.correct_answer);
+  assert.equal('correct' in feedback, false);
+  assert.equal('correct_answer' in feedback, false);
+  assert.equal('correct' in feedback, false);
   assert.equal((await request(path + '/answer', token, body)).status, 200);
   assert.equal(
     (await request(path + '/answer', token, { ...body, skipped: false, answer: '1' })).status,
@@ -375,25 +377,23 @@ test('skip reveals the answer, is idempotent, advances and cannot be replaced', 
   sqlite.close();
 });
 
-test('synonyms accept spelling, plurals and common alternatives without conflating categories', () => {
-  for (const [label, answer] of [
-    ['Sneaker', 'shoe'],
-    ['Sneaker', 'TRAINERS'],
-    ['Trouser', 'pants'],
-    ['Trouser', 'the trousers'],
-    ['T-shirt top', 'a t-shirt'],
-    ['Ankle boot', 'boots'],
-  ])
-    assert.equal(grade('fashion', label, answer, 'legacy').correct, 1);
-  assert.equal(grade('cifar10', 'airplane', 'aeroplane', 'hybrid').correct, 1);
-  assert.equal(grade('cifar10', 'automobile', 'a car', 'hybrid').correct, 1);
-  assert.equal(grade('fashion', 'Shirt', 't-shirt', 'legacy').correct, null);
-  assert.equal(grade('cifar10', 'automobile', 'ankle boot', 'hybrid').correct, null);
-  assert.equal(grade('cifar10', 'cat', 'dog', 'choices').correct, 0);
-  assert.equal(grade('cifar10', 'cat', '', 'hybrid', true).method, 'skipped');
+test('Quickdraw synonyms accept alternatives; unknown answers await review', () => {
+  for (const answer of ['plane', 'planes', 'A PLANE!', 'air-plane', 'aeroplane', 'aircraft']) {
+    assert.deepEqual(grade('quickdraw', 'airplane', answer, 'hybrid'), {
+      correct: 1,
+      method: 'synonyms-v1',
+    });
+  }
+
+  assert.equal(grade('quickdraw', 'bicycle', 'a bike', 'hybrid').correct, 1);
+  assert.equal(grade('quickdraw', 'airplane', 'aeroplane', 'hybrid').correct, 1);
+  assert.equal(grade('quickdraw', 'sailboat', 'sailing boat', 'hybrid').correct, 1);
+  assert.equal(grade('quickdraw', 'cat', 'dog', 'hybrid').correct, null);
+  assert.equal(grade('fashion', 'Sneaker', 'Sneaker', 'hybrid').correct, 1);
+  assert.equal(grade('fashion', 'Sneaker', 'Shirt', 'hybrid').correct, 0);
 });
 
-test('team controls are authenticated; respondent modes are frozen; team test data is marked', async () => {
+test('team controls are authenticated; response format is fixed; team test data is marked', async () => {
   const { sqlite, env, request } = setup();
   const teamResponse = await request('/api/admin/team-links', env.ADMIN_TOKEN, {});
   assert.equal(teamResponse.status, 201);
@@ -422,11 +422,11 @@ test('team controls are authenticated; respondent modes are frozen; team test da
     403,
   );
   assert.equal(
-    (await request('/api/runs', secret(), { team_key: 'invalid', condition: 'study-3211-v2' }))
+    (await request('/api/runs', secret(), { team_key: 'invalid', condition: 'study-2222-v4' }))
       .status,
     403,
   );
-  assert.equal((await request('/api/team/settings', team, { answer_mode: 'choices' })).status, 200);
+  assert.equal((await request('/api/team/settings', team, { answer_mode: 'choices' })).status, 400);
   const token = secret();
   const state = (await (await request('/api/runs', token, { invite })).json()) as any;
   assert.equal(state.answer_mode, 'hybrid');
@@ -438,20 +438,20 @@ test('team controls are authenticated; respondent modes are frozen; team test da
   assert.equal(respondentAccess.answer_mode, 'hybrid');
   const teamToken = secret();
   let testRun = (await (
-    await request('/api/runs', teamToken, { team_key: team, condition: 'study-3211-v2' })
+    await request('/api/runs', teamToken, { team_key: team, condition: 'study-2222-v4' })
   ).json()) as any;
-  assert.equal(testRun.answer_mode, 'choices');
+  assert.equal(testRun.answer_mode, 'hybrid');
   assert.equal(testRun.audience, 'team');
   // Changing the global mode cannot alter this run's snapshot.
   await request('/api/team/settings', team, { answer_mode: 'hybrid' });
   testRun = await (await request('/api/runs/' + testRun.run_id, teamToken)).json();
-  assert.equal(testRun.answer_mode, 'choices');
-  for (let n = 0; n < 21; n++) {
-    assert.notEqual(testRun.trial.answer_type, 'text');
-    assert.ok(testRun.trial.options.length >= 9);
+  assert.equal(testRun.answer_mode, 'hybrid');
+  for (let n = 0; n < 24; n++) {
+    assert.equal(testRun.trial.answer_type === 'text', testRun.dataset === 'quickdraw');
+    assert.equal(testRun.trial.options.length === 0, testRun.dataset === 'quickdraw');
     const base = `/api/runs/${testRun.run_id}/trials/${testRun.trial.id}`;
     await request(base + '/ready', teamToken, {}, 'POST');
-    const answer = testRun.trial.options[0];
+    const answer = testRun.trial.options[0] || 'An unknown shape';
     const res = await request(base + '/answer', teamToken, submission(answer));
     assert.equal(res.status, 200);
     testRun = await (await request('/api/runs/' + testRun.run_id, teamToken)).json();
@@ -461,16 +461,16 @@ test('team controls are authenticated; respondent modes are frozen; team test da
   const results = (await (
     await request('/api/runs/' + testRun.run_id + '/results', teamToken)
   ).json()) as any;
-  assert.equal(results.rows.length, 21);
-  assert.ok(results.rows.every((r: any) => r.correct !== null));
-  assert.equal((sqlite.prepare('SELECT COUNT(*) AS n FROM answers').get() as any).n, 21);
+  assert.equal(results.rows.length, 24);
+  assert.ok(results.rows.every((r: any) => !('correct' in r) && !('correct_answer' in r)));
+  assert.equal((sqlite.prepare('SELECT COUNT(*) AS n FROM answers').get() as any).n, 24);
   sqlite.close();
 });
 
 test('shared entry URLs load without consuming an invitation; used status is explicit', async () => {
   const { sqlite, env, request } = setup();
   const response = await request('/api/admin/invitations', env.ADMIN_TOKEN, {
-    condition: 'study-3211-v2',
+    condition: 'study-2222-v4',
   });
   const link = (await response.json()) as any;
   const invite = linkToken(link.url);
@@ -497,7 +497,7 @@ test('shared entry URLs load without consuming an invitation; used status is exp
     .prepare(
       'INSERT INTO invitations(id,token_hash,dataset,difficulty,plan_id,answer_mode) VALUES(?,?,?,?,?,?)',
     )
-    .run('legacy-link', await digest(old), 'mixed', 0, 'study-3211-v2', 'hybrid');
+    .run('legacy-link', await digest(old), 'mixed', 0, 'study-2222-v4', 'hybrid');
   assert.equal((await request('/api/access', undefined, { invite: old })).status, 200);
   sqlite.close();
 });
@@ -508,15 +508,15 @@ test('local study uses team and respondent access with the same full plan as pro
   const config = (await (await request('/api/config')).json()) as any;
   assert.deepEqual(
     config.conditions.map((condition: any) => condition.id),
-    ['study-3211-v2'],
+    ['study-2222-v4'],
   );
-  assert.equal((await request('/api/runs', secret(), { condition: 'study-3211-v2' })).status, 403);
+  assert.equal((await request('/api/runs', secret(), { condition: 'study-2222-v4' })).status, 403);
   const link = (await (await request('/api/admin/team-links', env.ADMIN_TOKEN, {})).json()) as any;
   const key = linkToken(link.url);
   const full = (await (
-    await request('/api/runs', secret(), { team_key: key, condition: 'study-3211-v2' })
+    await request('/api/runs', secret(), { team_key: key, condition: 'study-2222-v4' })
   ).json()) as any;
-  assert.equal(full.trial_count, 21);
+  assert.equal(full.trial_count, 24);
   assert.equal(full.audience, 'team');
   assert.equal(full.answer_mode, 'hybrid');
   const preview = await request('/api/runs', secret(), {
@@ -528,6 +528,106 @@ test('local study uses team and respondent access with the same full plan as pro
   assert.equal(
     (await request('/api/runs', secret(), { team_key: key, condition: 'mnist-preview-v1' })).status,
     400,
+  );
+  sqlite.close();
+});
+
+test('protocol migration updates unused invitations and preserves started runs', async () => {
+  const { sqlite } = setup();
+  for (const id of ['unused', 'started'])
+    sqlite
+      .prepare(
+        'INSERT INTO invitations(id,token_hash,dataset,difficulty,plan_id,answer_mode) VALUES(?,?,?,0,?,?)',
+      )
+      .run(id, id, 'mixed', 'study-3211-v2', 'choices');
+  sqlite
+    .prepare(
+      `INSERT INTO runs(id,token_hash,invitation_id,dataset,difficulty,alias,participant_kind,trial_count,plan_id,answer_mode,audience)
+    VALUES('historical','historical','started','mixed',0,'','human',21,'study-3211-v2','choices','respondent')`,
+    )
+    .run();
+  sqlite.exec(readFileSync('migrations/0006_quickdraw_study.sql', 'utf8'));
+  assert.equal(
+    (sqlite.prepare("SELECT plan_id FROM invitations WHERE id='unused'").get() as any).plan_id,
+    'study-2211-v3',
+  );
+  assert.equal(
+    (sqlite.prepare("SELECT plan_id FROM invitations WHERE id='started'").get() as any).plan_id,
+    'study-3211-v2',
+  );
+  assert.equal(
+    (sqlite.prepare("SELECT trial_count FROM runs WHERE id='historical'").get() as any).trial_count,
+    21,
+  );
+  sqlite.close();
+});
+
+test('restricted classes are enforced during sampling and Fashion labels match display choices', () => {
+  const banned = {
+    mnist: ['0'],
+    fashion: ['Coat', 'Pullover', 'Shirt', 'Ankle boot', 'Sandal'],
+    quickdraw: ['airplane', 'cat', 'sailboat'],
+  };
+  const pool = plans[0].datasets.flatMap((dataset) =>
+    DIFFICULTIES.flatMap((difficulty) =>
+      [...options[dataset], ...banned[dataset as keyof typeof banned]].flatMap((label) =>
+        Array.from(
+          { length: 10 },
+          (_, i) =>
+            ({
+              id: `${dataset}-${difficulty}-${label}-${i}`,
+              dataset,
+              difficulty,
+              label,
+              source_index: `${label}-${i}`,
+              exposures: banned[dataset as keyof typeof banned].includes(label) ? -100 : 0,
+            }) as Stimulus,
+        ),
+      ),
+    ),
+  );
+  for (let n = 0; n < 20; n++) {
+    const selected = samplePlan(pool, plans[0]);
+    assert.equal(selected.length, 24);
+    for (const item of selected) assert.ok(options[item.dataset].includes(item.label));
+  }
+  for (const [label, answer] of [
+    ['T-shirt top', 'T-shirt'],
+    ['Trouser', 'Trousers'],
+    ['Sneaker', 'Sneakers'],
+    ['Bag', 'Bag'],
+    ['Dress', 'Dress'],
+  ])
+    assert.equal(grade('fashion', label, answer, 'hybrid').correct, 1);
+});
+
+test('balanced-block migration upgrades unused links without rewriting historical runs', () => {
+  const { sqlite } = setup();
+  for (const id of ['unused-v3', 'started-v3'])
+    sqlite
+      .prepare(
+        'INSERT INTO invitations(id,token_hash,dataset,difficulty,plan_id,answer_mode) VALUES(?,?,?,0,?,?)',
+      )
+      .run(id, id, 'mixed', 'study-2211-v3', 'hybrid');
+  sqlite
+    .prepare(
+      `INSERT INTO runs(id,token_hash,invitation_id,dataset,difficulty,alias,participant_kind,trial_count,plan_id,answer_mode,audience)
+    VALUES('historical-v3','historical-v3','started-v3','mixed',0,'','human',18,'study-2211-v3','hybrid','respondent')`,
+    )
+    .run();
+  sqlite.exec(readFileSync('migrations/0007_balanced_blocks.sql', 'utf8'));
+  assert.equal(
+    (sqlite.prepare("SELECT plan_id FROM invitations WHERE id='unused-v3'").get() as any).plan_id,
+    'study-2222-v4',
+  );
+  assert.equal(
+    (sqlite.prepare("SELECT plan_id FROM invitations WHERE id='started-v3'").get() as any).plan_id,
+    'study-2211-v3',
+  );
+  assert.equal(
+    (sqlite.prepare("SELECT trial_count FROM runs WHERE id='historical-v3'").get() as any)
+      .trial_count,
+    18,
   );
   sqlite.close();
 });

@@ -88,7 +88,7 @@ async function management(req: Request, env: Env) {
   await admin(req, env);
 }
 async function createInvitation(env: Env, origin: string, condition: unknown) {
-  const c = plans.find((c) => c.id === (condition ?? 'study-3211-v2') && !c.demoOnly);
+  const c = plans.find((c) => c.id === (condition ?? 'study-2222-v4') && !c.demoOnly);
   if (!c) fail(400, 'Unknown condition.');
   const mode = (await settings(env.DB)).answer_mode,
     secret = token();
@@ -158,7 +158,7 @@ async function state(env: Env, run: Run) {
 }
 async function feedback(env: Env, trialId: string) {
   return env.DB.prepare(
-    `SELECT a.answer,a.skipped,a.correct,a.grading_method,s.label AS correct_answer,a.response_time_ms,a.submitted_at
+    `SELECT a.answer,a.skipped,a.response_time_ms,a.submitted_at
     FROM answers a JOIN trials t ON t.id=a.trial_id JOIN stimuli s ON s.id=t.stimulus_id WHERE a.trial_id=?`,
   )
     .bind(trialId)
@@ -206,7 +206,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       conditions: available.some((condition) => !condition.preview && condition.ready)
         ? available.filter((condition) => !condition.preview)
         : available,
-      trial_count: 21,
+      trial_count: 24,
       public_runs: env.ALLOW_PUBLIC_RUNS === 'true',
     });
   }
@@ -236,12 +236,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     await management(req, env);
     if (req.method === 'GET') return json(await settings(env.DB));
     if (req.method === 'POST') {
-      const data = await body(req);
-      if (!['hybrid', 'choices'].includes(data.answer_mode)) fail(400, 'Unknown answer mode.');
-      await env.DB.prepare('UPDATE study_settings SET answer_mode=?,updated_at=? WHERE id=1')
-        .bind(data.answer_mode, new Date().toISOString())
-        .run();
-      return json(await settings(env.DB));
+      fail(400, 'The study uses one fixed response format.');
     }
   }
   if (
@@ -427,7 +422,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     if (action === 'results' && req.method === 'GET') {
       if (await current(env, run)) fail(409, 'Finish the run first.');
       const { results } = await env.DB.prepare(
-        `SELECT t.id AS trial_id,t.ordinal,s.dataset,s.difficulty,a.answer,a.skipped,a.correct,a.grading_method,s.label AS correct_answer,
+        `SELECT t.id AS trial_id,t.ordinal,s.dataset,s.difficulty,a.answer,a.skipped,
         a.response_time_ms,a.submitted_at FROM trials t JOIN answers a ON a.trial_id=t.id JOIN stimuli s ON s.id=t.stimulus_id
         WHERE t.run_id=? ORDER BY t.ordinal`,
       )

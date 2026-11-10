@@ -1,3 +1,5 @@
+import { allowedClass } from './grading';
+
 export type Stimulus = {
   id: string;
   image_path: string;
@@ -10,7 +12,7 @@ export type Stimulus = {
 };
 // Khajuria et al. (2025), Fig. 8: https://doi.org/10.1371/journal.pcbi.1012968
 export const DIFFICULTIES = [9, 11, 13, 17] as const;
-export const DATASETS = ['mnist', 'fashion', 'cifar10'] as const;
+export const DATASETS = ['mnist', 'fashion', 'quickdraw'] as const;
 export const DISTRIBUTIONS = {
   '2211': [2, 2, 1, 1],
   '3211': [3, 2, 1, 1],
@@ -28,12 +30,12 @@ export type Plan = {
 };
 export const plans: Plan[] = [
   {
-    id: 'study-3211-v2',
-    name: 'Full study · 21 images',
+    id: 'study-2222-v4',
+    name: 'Full study · 24 images',
     dataset: 'mixed',
     difficulty: 0,
     datasets: DATASETS,
-    counts: DISTRIBUTIONS['3211'],
+    counts: DISTRIBUTIONS['2222'],
   },
   {
     id: 'mnist-preview-v1',
@@ -67,7 +69,7 @@ export function samplePlan(pool: Stimulus[], plan: Plan): Stimulus[] {
             (s) =>
               s.dataset === dataset &&
               s.difficulty === difficulty &&
-              (dataset !== 'mnist' || /^[1-9]$/.test(s.label)),
+              allowedClass(dataset, s.label),
           ),
         ),
       ),
@@ -102,11 +104,9 @@ export function samplePlan(pool: Stimulus[], plan: Plan): Stimulus[] {
     }
     chosen.push(...assigned.values());
   }
-  // Never decrease difficulty. Begin with MNIST at the lowest level.
-  const opening = chosen.filter((s) => s.dataset === 'mnist' && s.difficulty === DIFFICULTIES[0]);
-  const remaining = chosen.filter((s) => s.dataset !== 'mnist' || s.difficulty !== DIFFICULTIES[0]);
-  return [
-    ...shuffle(opening),
-    ...DIFFICULTIES.flatMap((d) => shuffle(remaining.filter((s) => s.difficulty === d))),
-  ];
+  return plan.datasets.flatMap((dataset) =>
+    DIFFICULTIES.flatMap((difficulty) =>
+      shuffle(chosen.filter((s) => s.dataset === dataset && s.difficulty === difficulty)),
+    ),
+  );
 }

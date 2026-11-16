@@ -273,6 +273,18 @@ test('private sessions: no answer leaks; one-use invitation; retries do not rewr
   const exported = (await (await request('/api/admin/export', env.ADMIN_TOKEN)).json()) as any;
   assert.equal(exported.rows.length, 24);
   assert.ok(exported.rows[0].telemetry.events.length);
+  assert.deepEqual(
+    results.scores,
+    ['mnist', 'fashion', 'quickdraw'].map((dataset) => {
+      const block = exported.rows.filter((row: any) => row.dataset === dataset);
+      return {
+        dataset,
+        total: 8,
+        correct: block.filter((row: any) => !row.skipped && row.correct === 1).length,
+        pending: block.filter((row: any) => !row.skipped && row.correct === null).length,
+      };
+    }),
+  );
   assert.ok(exported.rows[0].ground_truth);
   assert.deepEqual(
     new Set(exported.rows.map((r: any) => r.dataset)),
@@ -432,6 +444,10 @@ test('team controls are authenticated; response format is fixed; team test data 
   assert.equal(state.answer_mode, 'hybrid');
   assert.equal(state.audience, 'respondent');
   assert.equal((await request('/api/team/invitations', token, {})).status, 401);
+  assert.equal((await request('/api/team/results')).status, 401);
+  assert.equal((await request('/api/team/results', invite)).status, 401);
+  assert.equal((await request('/api/team/results', token)).status, 401);
+  assert.equal((await request('/api/team/results', team)).status, 200);
   const respondentAccess = (await (
     await request('/api/access', undefined, { invite })
   ).json()) as any;
@@ -456,6 +472,9 @@ test('team controls are authenticated; response format is fixed; team test data 
     assert.equal(res.status, 200);
     testRun = await (await request('/api/runs/' + testRun.run_id, teamToken)).json();
   }
+  const teamResults = (await (await request('/api/team/results', team)).json()) as any;
+  assert.equal(teamResults.rows.length, 24);
+  assert.ok(teamResults.rows.every((row: any) => row.ground_truth && row.telemetry.events.length));
   assert.equal(testRun.complete, true);
   assert.equal(testRun.trial, undefined);
   const results = (await (

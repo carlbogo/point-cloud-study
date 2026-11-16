@@ -4,10 +4,12 @@ const formatTime = (value) =>
   value ? new Date(value).toLocaleString('en-GB', { timeZoneName: 'short' }) : '—';
 export default function Results({
   rows,
+  scores = [],
   runId,
   team,
   canRestart,
   onRestart,
+  restartLabel,
   onSettings,
   onExport,
   receipt,
@@ -24,6 +26,29 @@ export default function Results({
       <div className="eyebrow">Run complete</div>
       <h1>Thank you!</h1>
       <p className="muted results-intro">All {rows.length} responses have been saved.</p>
+      {scores.length > 0 && (
+        <>
+          <h2>Scores by block</h2>
+          <div className="results-grid">
+            {scores.map(({ dataset, correct, total, pending }) => (
+              <div className="result-metric" key={dataset}>
+                <span>
+                  {{
+                    mnist: 'MNIST',
+                    fashion: 'FashionMNIST',
+                    quickdraw: 'Quickdraw',
+                    cifar10: 'CIFAR-10',
+                  }[dataset] ?? dataset}
+                </span>
+                <strong>
+                  {correct} / {total}
+                </strong>
+                {pending > 0 && <small>Provisional · {pending} need manual review</small>}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
       <dl className="results-counts">
         <div>
           <dt>Answered</dt>
@@ -103,7 +128,7 @@ export default function Results({
       <div className="results-actions">
         {canRestart && (
           <button className="button primary" onClick={onRestart}>
-            Start a new test run
+            {restartLabel}
           </button>
         )}
         {team && (

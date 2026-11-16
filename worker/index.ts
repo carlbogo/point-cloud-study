@@ -208,6 +208,7 @@ async function route(req: Request, env: Env): Promise<Response> {
         : available,
       trial_count: 24,
       public_runs: env.ALLOW_PUBLIC_RUNS === 'true',
+      local: env.DATA_ENV === 'local',
     });
   }
   if (path === '/api/access' && req.method === 'POST') {
@@ -247,19 +248,25 @@ async function route(req: Request, env: Env): Promise<Response> {
     else await management(req, env);
     return json(await createInvitation(env, url.origin, (await body(req)).condition), 201);
   }
-  if (path === '/api/admin/export' && req.method === 'GET') {
-    await admin(req, env);
+  if (['/api/admin/export', '/api/team/results'].includes(path) && req.method === 'GET') {
+    const teamResults = path === '/api/team/results';
+    if (teamResults) {
+      if (!(await isTeam(env.DB, bearer(req)))) fail(401, 'Team authentication required.');
+    } else await admin(req, env);
+    const pageSize = teamResults ? 50 : 1000;
     const after = url.searchParams.get('after') ?? '';
     const { results } = await env.DB.prepare(
       `SELECT t.id AS trial_id,r.id AS run_id,r.alias,r.participant_kind,r.plan_id,r.answer_mode,r.audience,s.dataset,s.difficulty,
       t.ordinal,s.id AS stimulus_id,s.source_index,s.stimulus_source,s.label AS ground_truth,s.metadata_json,
       t.served_at,t.ready_at,a.answer,a.skipped,a.correct,a.grading_method,a.response_time_ms,a.submitted_at,a.telemetry_json
       FROM answers a JOIN trials t ON t.id=a.trial_id JOIN runs r ON r.id=t.run_id JOIN stimuli s ON s.id=t.stimulus_id
-      WHERE t.id>? ORDER BY t.id LIMIT 1000`,
+      WHERE t.id>? ORDER BY t.id LIMIT ?`,
     )
-      .bind(after)
+      .bind(after, pageSize + 1)
       .all<Record<string, unknown>>();
-    const next = results.length === 1000 ? String(results.at(-1)!.trial_id) : null;
+    const more = results.length > pageSize;
+    if (more) results.pop();
+    const next = more ? String(results.at(-1)!.trial_id) : null;
     if (url.searchParams.get('format') === 'csv') {
       const rows = results.map(({ telemetry_json, ...row }) => ({
         ...row,
@@ -428,7 +435,16 @@ async function route(req: Request, env: Env): Promise<Response> {
       )
         .bind(run.id)
         .all();
-      return json({ run_id: run.id, rows: results });
+      const { results: scores } = await env.DB.prepare(
+        `SELECT s.dataset, COUNT(*) AS total,
+          SUM(CASE WHEN a.skipped=0 AND a.correct=1 THEN 1 ELSE 0 END) AS correct,
+          SUM(CASE WHEN a.skipped=0 AND a.correct IS NULL THEN 1 ELSE 0 END) AS pending
+        FROM trials t JOIN answers a ON a.trial_id=t.id JOIN stimuli s ON s.id=t.stimulus_id
+        WHERE t.run_id=? GROUP BY s.dataset ORDER BY MIN(t.ordinal)`,
+      )
+        .bind(run.id)
+        .all();
+      return json({ run_id: run.id, rows: results, scores });
     }
     const image = action.match(/^image\/([a-f0-9-]+)$/);
     if (image && req.method === 'GET') {

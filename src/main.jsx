@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import Drawing from './Drawing';
 import Results from './Results';
+import TeamResults from './TeamResults';
 import { parseAccessLink } from './access-links';
 import { api, loadSession, storeSession, exportFile, csv, SESSION_KEY } from './api';
 import './style.css';
@@ -17,8 +18,7 @@ function App() {
     [image, setImage] = useState(''),
     [ready, setReady] = useState(false);
   const [selected, setSelected] = useState(''),
-    [feedback, setFeedback] = useState(null),
-    [results, setResults] = useState([]);
+    [results, setResults] = useState({ rows: [], scores: [] });
   const [busy, setBusy] = useState(false),
     [booting, setBooting] = useState(true),
     [error, setError] = useState('');
@@ -122,7 +122,6 @@ function App() {
       setState(null);
       setImage('');
       setReady(false);
-      setFeedback(null);
       setRole('respondent');
       setRespondentLink('');
       setNotice('');
@@ -141,14 +140,14 @@ function App() {
   }, []);
   useEffect(() => {
     const before = (e) => {
-      if (screen === 'play' && !feedback) {
+      if (screen === 'play') {
         e.preventDefault();
         e.returnValue = '';
       }
     };
     window.addEventListener('beforeunload', before);
     return () => window.removeEventListener('beforeunload', before);
-  }, [screen, feedback]);
+  }, [screen]);
 
   const [receipt, setReceipt] = useState(null);
   const [receiptBusy, setReceiptBusy] = useState(false);
@@ -178,7 +177,6 @@ function App() {
     setScreen('loading');
     setReady(false);
     setImage('');
-    setFeedback(null);
     setSelected('');
     setTruncated(false);
     setState(next);
@@ -191,7 +189,7 @@ function App() {
         token: session.current.token,
       });
       if (version !== generation.current) return;
-      setResults(data.rows);
+      setResults(data);
       setScreen('results');
       setReceipt(null);
       void verifyStorage();
@@ -314,21 +312,19 @@ function App() {
     const s = session.current,
       p = s.pending;
     if (!p) throw new Error('No pending answer. Resume your session.');
-    const result = await api(`/api/runs/${s.run_id}/trials/${p.trial_id}/answer`, {
+    await api(`/api/runs/${s.run_id}/trials/${p.trial_id}/answer`, {
       token: s.token,
       body: p.body,
     });
     if (session.current !== s) return;
-    if (p.snapshot) setState(p.snapshot);
-    setSelected(p.body.answer);
-    setFeedback(result);
-    setScreen('play');
-    setReady(false);
-    locked.current = true;
-    s.last_feedback = { ...result, ordinal: p.ordinal };
     delete s.pending;
     persist();
+    setReady(false);
+    setScreen('loading');
+    const next = await api(`/api/runs/${s.run_id}`, { token: s.token });
+    if (session.current === s) await showState(next);
   }
+
   async function submit(skipped = false) {
     const trial = state?.trial;
     if (
@@ -347,8 +343,6 @@ function App() {
     locked.current = true;
     session.current.pending = {
       trial_id: trial.id,
-      ordinal: trial.ordinal,
-      snapshot: state,
       body: {
         submission_id: crypto.randomUUID(),
         answer: skipped ? '' : selected,
@@ -365,20 +359,6 @@ function App() {
     persist();
     try {
       await sendPending();
-    } catch (e) {
-      report(e);
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function next() {
-    if (busy) return;
-    setBusy(true);
-    setError('');
-    try {
-      await showState(
-        await api(`/api/runs/${session.current.run_id}`, { token: session.current.token }),
-      );
     } catch (e) {
       report(e);
     } finally {
@@ -411,7 +391,6 @@ function App() {
       return;
     if (
       screen === 'play' &&
-      !feedback &&
       !window.confirm(
         'Start a new test run? Unsubmitted work will be lost. Saved answers will remain.',
       )
@@ -438,8 +417,7 @@ function App() {
     setImage('');
     setReady(false);
     setSelected('');
-    setFeedback(null);
-    setResults([]);
+    setResults({ rows: [], scores: [] });
     setError('');
     setTruncated(false);
     setScreen('home');
@@ -491,6 +469,7 @@ function App() {
   }, [screen, ready, busy, selected, state]);
   const pending = Boolean(session.current?.pending);
   const canRestart = role === 'team' || (config?.public_runs && !context.current.invite);
+  const restartLabel = config?.local ? 'Start new session' : 'Start a new test run';
   const currentCondition = config?.conditions.find((c) => c.id === condition);
   const choice = state?.trial?.answer_type === 'digit' || state?.trial?.answer_type === 'choice';
   return (
@@ -513,7 +492,7 @@ function App() {
         {hasSession && canRestart && screen !== 'results' && (
           <div className="action-row wrap top16">
             <button className="button secondary" disabled={busy || pending} onClick={startOver}>
-              Start a new test run
+              {restartLabel}
             </button>
             {role === 'team' && screen !== 'home' && (
               <button
@@ -539,6 +518,9 @@ function App() {
                 <div className="action-row wrap">
                   <button className="button secondary" disabled={busy} onClick={createInvite}>
                     Create respondent link
+                  </button>
+                  <button className="button secondary" onClick={() => setScreen('team-results')}>
+                    View all results
                   </button>
                 </div>
                 {notice && (
@@ -677,7 +659,13 @@ function App() {
                     }
                     onClick={startRun}
                   >
-                    {busy ? 'Starting…' : role === 'team' ? 'Start test run' : 'Start study'}
+                    {busy
+                      ? 'Starting…'
+                      : config?.local && role === 'team'
+                        ? 'Start new session'
+                        : role === 'team'
+                          ? 'Start test run'
+                          : 'Start study'}
                   </button>
                 </>
               )}
@@ -688,6 +676,9 @@ function App() {
               )}
             </section>
           </>
+        )}
+        {screen === 'team-results' && role === 'team' && (
+          <TeamResults token={context.current.team_key} onBack={() => setScreen('home')} />
         )}
         {screen === 'loading' && (
           <section className="card">
@@ -740,19 +731,20 @@ function App() {
               <h1>Constellation</h1>
               <div className="trial-meta">
                 <span>
-                  Trial{' '}
-                  {state?.trial?.ordinal ||
-                    session.current?.last_feedback?.ordinal ||
-                    session.current?.pending?.ordinal}{' '}
-                  / {state?.trial_count || 24}
-                </span>
-                <span>
                   {{ mnist: 'MNIST', fashion: 'FashionMNIST', quickdraw: 'Quickdraw' }[
                     state?.dataset
                   ] || ''}{' '}
                   {state?.difficulty ? `d = ${state.difficulty}` : ''}
                 </span>
               </div>
+              {state?.trial && (
+                <progress
+                  aria-label="Study progress"
+                  className="progress"
+                  max={state.trial_count}
+                  value={state.trial.ordinal - 1}
+                />
+              )}
               {image && state?.trial?.id && (
                 <Drawing
                   key={state.trial.id}
@@ -814,17 +806,7 @@ function App() {
                   />
                 </>
               )}
-              {feedback ? (
-                <>
-                  <div role="status" className="feedback-box">
-                    {feedback.skipped ? 'Image skipped.' : 'Answer saved.'}
-                  </div>
-                  <p className="muted">Saved to the study server. This answer is locked.</p>
-                  <button className="button primary wide top20" disabled={busy} onClick={next}>
-                    {busy ? 'Loading…' : 'Continue'}
-                  </button>
-                </>
-              ) : pending ? (
+              {pending && !busy ? (
                 <>
                   <p className="warning-text">
                     Your answer is waiting for server confirmation. Retrying sends the same locked
@@ -863,7 +845,7 @@ function App() {
                   </button>
                 </>
               )}
-              {!ready && !feedback && !pending && !busy && (
+              {!ready && !pending && !busy && (
                 <button className="button secondary top16" onClick={resume}>
                   Reload current trial
                 </button>
@@ -873,11 +855,13 @@ function App() {
         )}
         {screen === 'results' && (
           <Results
-            rows={results}
+            rows={results.rows}
+            scores={results.scores}
             runId={session.current.run_id}
             team={role === 'team'}
             canRestart={canRestart}
             onRestart={startOver}
+            restartLabel={restartLabel}
             onSettings={() => setScreen('home')}
             receipt={receipt}
             receiptBusy={receiptBusy}
@@ -886,7 +870,7 @@ function App() {
             onExport={() =>
               exportFile(
                 `constellation-${session.current.run_id}.csv`,
-                csv(results.map((row) => ({ run_id: session.current.run_id, ...row }))),
+                csv(results.rows.map((row) => ({ run_id: session.current.run_id, ...row }))),
                 'text/csv',
               )
             }

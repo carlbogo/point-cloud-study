@@ -345,24 +345,33 @@ h2 {
 }
 
 .trial-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
   margin-top: 12px;
   color: var(--muted);
   font-size: 14px;
 }
 
 .progress {
+  display: block;
+  appearance: none;
+  width: 100%;
   height: 6px;
-  background: #101318;
+  margin-top: 14px;
+  border: 0;
   border-radius: 999px;
   overflow: hidden;
-  margin-top: 14px;
+  background: #101318;
+  accent-color: var(--accent-strong);
 }
 
-.progress > div {
-  height: 100%;
+.progress::-webkit-progress-bar {
+  background: #101318;
+}
+
+.progress::-webkit-progress-value {
+  background: var(--accent-strong);
+}
+
+.progress::-moz-progress-bar {
   background: var(--accent-strong);
 }
 
@@ -713,4 +722,22 @@ p {
   .container > .action-row .button {
     flex: 1 1 180px;
   }
+}
+
+.team-response-list details {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.team-response-list summary {
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.team-response-list pre {
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--bg);
+  border-radius: 8px;
 }

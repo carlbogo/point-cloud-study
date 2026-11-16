@@ -579,24 +579,53 @@ function App() {
               </section>
             )}
             <section className="card setup-card top20">
-              <div className="eyebrow">Constellation recognition</div>
               <h1>What do you see in the stars?</h1>
               <p className="intro">
-                Identify the shape in each image. Select an answer when options are shown;
-                otherwise, describe what you see in English. You may draw lines to help you see the
-                shape. Drawing is optional.
+                How do people and AI recognise shapes when all they can see is a field of dots? In
+                this study, we compare how accurately people and AI models recognise the same kinds
+                of images as the task gets harder. Your responses help us see which images are easy
+                for both groups and where their answers differ.
               </p>
-              <p className="muted">
-                The study has 24 images in three blocks: MNIST, FashionMNIST and Quickdraw. Each
-                block has eight images, progressing from easier to harder. Each block starts with
-                instructions. Answers are saved and locked after submission or skipping. Correct
-                answers are not shown.
-              </p>
-              <p className="muted">
-                We save answers, response times, drawing actions, answer changes and page
-                visibility. A browser session lets you resume. Please do not enter personal
-                information.
-              </p>
+              <section className="top24" aria-labelledby="study-team">
+                <h2 id="study-team">Who we are</h2>
+                <p className="muted">
+                  This study is part of our research project,{' '}
+                  <em>
+                    Comparing LMMs with human vision on constellated images and visual test
+                    batteries
+                  </em>
+                  .
+                </p>
+                <p className="muted">
+                  <strong>Team 6-2:</strong> Carl-Christian Bogoslovski, Tarvo Metspalu, Kristel
+                  Saul and Jaak Vaabel
+                  <br />
+                  <strong>Supervisor:</strong> Jaan Aru
+                </p>
+              </section>
+              <section className="top24" aria-labelledby="study-task">
+                <h2 id="study-task">What you’ll do</h2>
+                <p className="muted">
+                  You’ll see 24 images in three blocks of eight. You’ll choose a digit in the first
+                  block, choose a clothing item or accessory in the second, and type what you see in
+                  English in the third. Each block starts with instructions. You can draw lines on
+                  the image if it helps or skip a question if you’re unsure.
+                </p>
+              </section>
+              <section className="top24" aria-labelledby="study-data">
+                <h2 id="study-data">What we collect and why</h2>
+                <p className="muted">
+                  We record your answers, skips and response times to compare recognition accuracy
+                  and speed across images and difficulty levels. We also record changes to your
+                  answer, drawing actions and when the study tab becomes hidden. These help us
+                  understand how you approached the task and interpret the timing data.
+                </p>
+                <p className="muted">
+                  Your answers are saved as you go. You can return in the same browser to resume
+                  your session. You may leave the alias blank or use a nickname. Please avoid
+                  entering your real name or other personal information.
+                </p>
+              </section>
               {booting ? (
                 <p role="status">Connecting…</p>
               ) : hasSession ? (

@@ -18,6 +18,7 @@ function setup(publicRuns = 'false') {
   sqlite.exec(readFileSync('migrations/0005_modes_and_team.sql', 'utf8'));
   sqlite.exec(readFileSync('migrations/0006_quickdraw_study.sql', 'utf8'));
   sqlite.exec(readFileSync('migrations/0007_balanced_blocks.sql', 'utf8'));
+  sqlite.exec(readFileSync('migrations/0008_shared_invitations.sql', 'utf8'));
   for (const dataset of ['mnist', 'fashion', 'quickdraw'])
     for (const difficulty of DIFFICULTIES)
       for (let i = 0; i < 12; i++) {
@@ -401,6 +402,12 @@ test('Quickdraw synonyms accept alternatives; unknown answers await review', () 
   assert.equal(grade('quickdraw', 'airplane', 'aeroplane', 'hybrid').correct, 1);
   assert.equal(grade('quickdraw', 'sailboat', 'sailing boat', 'hybrid').correct, 1);
   assert.equal(grade('quickdraw', 'cat', 'dog', 'hybrid').correct, null);
+  assert.deepEqual(grade('quickdraw', 'tree', 'An umbrella!', 'hybrid'), {
+    correct: 0,
+    method: 'known-class-v1',
+  });
+  assert.equal(grade('quickdraw', 'tree', 'trees', 'hybrid').correct, 1);
+  assert.equal(grade('quickdraw', 'tree', 'tree or umbrella', 'hybrid').correct, null);
   assert.equal(grade('fashion', 'Sneaker', 'Sneaker', 'hybrid').correct, 1);
   assert.equal(grade('fashion', 'Sneaker', 'Shirt', 'hybrid').correct, 0);
 });
@@ -475,6 +482,23 @@ test('team controls are authenticated; response format is fixed; team test data 
   const teamResults = (await (await request('/api/team/results', team)).json()) as any;
   assert.equal(teamResults.rows.length, 24);
   assert.ok(teamResults.rows.every((row: any) => row.ground_truth && row.telemetry.events.length));
+  assert.equal((await request('/api/team/response-report', invite)).status, 401);
+  assert.equal((await request('/api/team/response-trends', invite)).status, 401);
+  const trends = (await (await request('/api/team/response-trends', team)).json()) as any;
+  assert.equal(trends.rows.length, 16);
+  assert.ok(trends.rows.every((row: any) => row.human_total === 1 && row.ai_total === 0));
+  assert.equal(
+    trends.rows.reduce((sum: number, row: any) => sum + row.human_correct, 0),
+    teamResults.rows.filter((row: any) => row.correct === 1).length,
+  );
+  const report = (await (await request('/api/team/response-report', team)).json()) as any;
+  assert.equal(report.runs.length, 1);
+  assert.equal(report.runs[0].participant_kind, 'human');
+  assert.deepEqual(
+    report.runs[0].rows.map((row: any) => row.ordinal),
+    Array.from({ length: 24 }, (_, index) => index + 1),
+  );
+  assert.ok(report.runs[0].rows.every((row: any) => row.ground_truth));
   assert.equal(testRun.complete, true);
   assert.equal(testRun.trial, undefined);
   const results = (await (
@@ -648,5 +672,35 @@ test('balanced-block migration upgrades unused links without rewriting historica
       .trial_count,
     18,
   );
+  sqlite.close();
+});
+
+test('a reusable respondent link starts independent runs and resumes by session token', async () => {
+  const { request, env, sqlite } = setup();
+  const created = await request('/api/admin/invitations', env.ADMIN_TOKEN, { reusable: true });
+  assert.equal(created.status, 201);
+  const { url, reusable } = (await created.json()) as { url: string; reusable: boolean };
+  assert.equal(reusable, true);
+  const invite = linkToken(url);
+  const firstToken = secret();
+  const secondToken = secret();
+  const [first, second] = await Promise.all([
+    request('/api/runs', firstToken, { invite }),
+    request('/api/runs', secondToken, { invite }),
+  ]);
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 201);
+  const firstRun = (await first.json()) as any;
+  const secondRun = (await second.json()) as any;
+  assert.notEqual(firstRun.run_id, secondRun.run_id);
+  assert.equal(firstRun.audience, 'respondent');
+  const resumed = (await (await request('/api/runs', firstToken, { invite })).json()) as any;
+  assert.equal(resumed.run_id, firstRun.run_id);
+  const access = (await (await request('/api/access', undefined, { invite })).json()) as any;
+  assert.equal(access.used, 0);
+  const ids = sqlite.prepare('SELECT shared_invitation_id FROM runs').all();
+  assert.equal(ids.length, 2);
+  assert.ok(ids[0].shared_invitation_id);
+  assert.equal(ids[0].shared_invitation_id, ids[1].shared_invitation_id);
   sqlite.close();
 });

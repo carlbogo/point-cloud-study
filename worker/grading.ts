@@ -116,6 +116,11 @@ export function grade(
     (synonyms[expected] ?? []).some((synonym) => normalise(synonym) === actual)
   )
     return { correct: 1, method: 'synonyms-v1' };
+  if (
+    dataset === 'quickdraw' &&
+    options.quickdraw.some((label) => label === actual || (synonyms[label] ?? []).includes(actual))
+  )
+    return { correct: 0, method: 'known-class-v1' };
   // Unknown wording stays available for manual review rather than an automatic wrong mark.
   return { correct: null, method: 'review-v1' };
 }

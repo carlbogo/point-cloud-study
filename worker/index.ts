@@ -87,17 +87,25 @@ async function management(req: Request, env: Env) {
   if (await isTeam(env.DB, bearer(req))) return;
   await admin(req, env);
 }
-async function createInvitation(env: Env, origin: string, condition: unknown) {
+async function createInvitation(env: Env, origin: string, condition: unknown, reusable: boolean) {
   const c = plans.find((c) => c.id === (condition ?? 'study-2222-v4') && !c.demoOnly);
   if (!c) fail(400, 'Unknown condition.');
   const mode = (await settings(env.DB)).answer_mode,
     secret = token();
   await env.DB.prepare(
-    'INSERT INTO invitations(id,token_hash,dataset,difficulty,plan_id,answer_mode) VALUES(?,?,?,?,?,?)',
+    'INSERT INTO invitations(id,token_hash,dataset,difficulty,plan_id,answer_mode,reusable) VALUES(?,?,?,?,?,?,?)',
   )
-    .bind(crypto.randomUUID(), await hash(secret), c!.dataset, c!.difficulty, c!.id, mode)
+    .bind(
+      crypto.randomUUID(),
+      await hash(secret),
+      c!.dataset,
+      c!.difficulty,
+      c!.id,
+      mode,
+      Number(reusable),
+    )
     .run();
-  return { url: `${origin}/join/${secret}`, condition: c!.id, answer_mode: mode };
+  return { url: `${origin}/join/${secret}`, condition: c!.id, answer_mode: mode, reusable };
 }
 async function runFor(req: Request, env: Env, id: string): Promise<Run> {
   const secret = bearer(req);
@@ -217,7 +225,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       return json({ role: 'team', ...(await settings(env.DB)) });
     if (typeof data.invite === 'string') {
       const invite = await env.DB.prepare(
-        'SELECT i.answer_mode,i.plan_id,EXISTS(SELECT 1 FROM runs r WHERE r.invitation_id=i.id) AS used FROM invitations i WHERE i.token_hash=?',
+        'SELECT i.answer_mode,i.plan_id,i.reusable,EXISTS(SELECT 1 FROM runs r WHERE r.invitation_id=i.id) AS used FROM invitations i WHERE i.token_hash=?',
       )
         .bind(await hash(data.invite))
         .first();
@@ -246,7 +254,52 @@ async function route(req: Request, env: Env): Promise<Response> {
   ) {
     if (path.startsWith('/api/admin/')) await admin(req, env);
     else await management(req, env);
-    return json(await createInvitation(env, url.origin, (await body(req)).condition), 201);
+    const data = await body(req);
+    return json(
+      await createInvitation(env, url.origin, data.condition, data.reusable === true),
+      201,
+    );
+  }
+  if (path === '/api/team/response-trends' && req.method === 'GET') {
+    if (!(await isTeam(env.DB, bearer(req)))) fail(401, 'Team authentication required.');
+    const { results } = await env.DB.prepare(
+      `SELECT s.id,s.dataset,s.difficulty,s.label AS ground_truth,
+        SUM(CASE WHEN r.participant_kind='model' THEN 1 ELSE 0 END) AS ai_total,
+        SUM(CASE WHEN r.participant_kind='model' AND a.correct=1 THEN 1 ELSE 0 END) AS ai_correct,
+        SUM(CASE WHEN r.participant_kind='human' THEN 1 ELSE 0 END) AS human_total,
+        SUM(CASE WHEN r.participant_kind='human' AND a.correct=1 THEN 1 ELSE 0 END) AS human_correct
+      FROM answers a JOIN trials t ON t.id=a.trial_id
+      JOIN runs r ON r.id=t.run_id JOIN stimuli s ON s.id=t.stimulus_id
+      WHERE a.skipped=0 AND a.correct IN (0,1) AND r.participant_kind IN ('human','model')
+      GROUP BY s.id ORDER BY s.dataset,s.difficulty,s.label,s.id`,
+    ).all();
+    return json({ rows: results });
+  }
+  if (path === '/api/team/response-report' && req.method === 'GET') {
+    if (!(await isTeam(env.DB, bearer(req)))) fail(401, 'Team authentication required.');
+    const after = url.searchParams.get('after') ?? '';
+    const { results: runs } = await env.DB.prepare(
+      `SELECT r.id,r.alias,r.participant_kind,r.audience,r.created_at,r.trial_count
+       FROM runs r WHERE r.id>?
+       AND EXISTS (SELECT 1 FROM trials t JOIN answers a ON a.trial_id=t.id WHERE t.run_id=r.id)
+       ORDER BY r.id LIMIT 9`,
+    )
+      .bind(after)
+      .all<{ id: string }>();
+    const more = runs.length > 8;
+    if (more) runs.pop();
+    if (!runs.length) return json({ runs: [], next_cursor: null });
+    const { results: rows } = await env.DB.prepare(
+      `SELECT t.run_id,t.ordinal,s.dataset,s.label AS ground_truth,a.answer,a.skipped,a.correct
+       FROM trials t JOIN answers a ON a.trial_id=t.id JOIN stimuli s ON s.id=t.stimulus_id
+       WHERE t.run_id IN (${runs.map(() => '?').join(',')}) ORDER BY t.ordinal`,
+    )
+      .bind(...runs.map((run) => run.id))
+      .all<{ run_id: string }>();
+    return json({
+      runs: runs.map((run) => ({ ...run, rows: rows.filter((row) => row.run_id === run.id) })),
+      next_cursor: more ? runs.at(-1)!.id : null,
+    });
   }
   if (['/api/admin/export', '/api/team/results'].includes(path) && req.method === 'GET') {
     const teamResults = path === '/api/team/results';
@@ -256,7 +309,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     const pageSize = teamResults ? 50 : 1000;
     const after = url.searchParams.get('after') ?? '';
     const { results } = await env.DB.prepare(
-      `SELECT t.id AS trial_id,r.id AS run_id,r.alias,r.participant_kind,r.plan_id,r.answer_mode,r.audience,s.dataset,s.difficulty,
+      `SELECT t.id AS trial_id,r.id AS run_id,r.alias,r.participant_kind,r.plan_id,r.answer_mode,r.audience,r.created_at AS run_created_at,r.trial_count,s.dataset,s.difficulty,
       t.ordinal,s.id AS stimulus_id,s.source_index,s.stimulus_source,s.label AS ground_truth,s.metadata_json,
       t.served_at,t.ready_at,a.answer,a.skipped,a.correct,a.grading_method,a.response_time_ms,a.submitted_at,a.telemetry_json
       FROM answers a JOIN trials t ON t.id=a.trial_id JOIN runs r ON r.id=t.run_id JOIN stimuli s ON s.id=t.stimulus_id
@@ -317,6 +370,7 @@ async function route(req: Request, env: Env): Promise<Response> {
               difficulty: number;
               plan_id: string | null;
               answer_mode: AnswerMode;
+              reusable: number;
             }>()
         : null;
     const team = await isTeam(env.DB, data.team_key);
@@ -347,11 +401,11 @@ async function route(req: Request, env: Env): Promise<Response> {
     try {
       await env.DB.batch([
         env.DB.prepare(
-          'INSERT INTO runs(id,token_hash,invitation_id,dataset,difficulty,alias,participant_kind,trial_count,plan_id,answer_mode,audience) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+          'INSERT INTO runs(id,token_hash,invitation_id,dataset,difficulty,alias,participant_kind,trial_count,plan_id,answer_mode,audience,shared_invitation_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
         ).bind(
           id,
           tokenHash,
-          invite?.id ?? null,
+          invite && !invite.reusable ? invite.id : null,
           c!.dataset,
           c!.difficulty,
           alias,
@@ -360,6 +414,7 @@ async function route(req: Request, env: Env): Promise<Response> {
           c!.id,
           mode,
           audience,
+          invite?.reusable ? invite.id : null,
         ),
         ...selected.map((s, i) =>
           env.DB.prepare('INSERT INTO trials(id,run_id,ordinal,stimulus_id) VALUES(?,?,?,?)').bind(
@@ -379,6 +434,7 @@ async function route(req: Request, env: Env): Promise<Response> {
       if (retried) return json(await state(env, retried));
       if (
         invite &&
+        !invite.reusable &&
         (await env.DB.prepare('SELECT id FROM runs WHERE invitation_id=?').bind(invite.id).first())
       )
         fail(

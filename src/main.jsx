@@ -25,6 +25,7 @@ function App() {
   const [storageWarning, setStorageWarning] = useState(''),
     [truncated, setTruncated] = useState(false),
     [hasSession, setHasSession] = useState(false);
+  const [sharedLink, setSharedLink] = useState(false);
   const [respondentLink, setRespondentLink] = useState(''),
     [notice, setNotice] = useState('');
   const context = useRef({ invite: '', team_key: '' }),
@@ -174,16 +175,7 @@ function App() {
     locked.current = true;
     start.current = 0;
     events.current = [];
-    setScreen('loading');
     setReady(false);
-    setImage('');
-    setSelected('');
-    setTruncated(false);
-    setState(next);
-    if (blob.current) {
-      URL.revokeObjectURL(blob.current);
-      blob.current = '';
-    }
     if (next.complete) {
       const data = await api(`/api/runs/${session.current.run_id}/results`, {
         token: session.current.token,
@@ -198,6 +190,7 @@ function App() {
     if (!next.trial?.id || !next.trial.image)
       throw new Error('The current image could not be loaded. Please resume your session.');
     if (!beginBlock && !session.current.introducedBlocks?.includes(next.dataset)) {
+      setState(next);
       setScreen('block-intro');
       return;
     }
@@ -207,7 +200,11 @@ function App() {
     if (!response.ok) throw new Error('The image could not be loaded. Please resume your session.');
     const data = await response.blob();
     if (version !== generation.current) return;
+    if (blob.current) URL.revokeObjectURL(blob.current);
     blob.current = URL.createObjectURL(data);
+    setState(next);
+    setSelected('');
+    setTruncated(false);
     activeTrial.current = next.trial.id;
     setImage(blob.current);
     setScreen('play');
@@ -320,7 +317,6 @@ function App() {
     delete s.pending;
     persist();
     setReady(false);
-    setScreen('loading');
     const next = await api(`/api/runs/${s.run_id}`, { token: s.token });
     if (session.current === s) await showState(next);
   }
@@ -430,14 +426,15 @@ function App() {
       setCopyNotice('Select the link field and copy the complete address.');
     }
   }
-  async function createInvite() {
+  async function createInvite(reusable = false) {
     setBusy(true);
     setError('');
     try {
       const data = await api('/api/team/invitations', {
         token: context.current.team_key,
-        body: { condition: 'study-2222-v4' },
+        body: { condition: 'study-2222-v4', reusable },
       });
+      setSharedLink(data.reusable);
       setRespondentLink(data.url);
       setCopyNotice('');
     } catch (e) {
@@ -516,8 +513,19 @@ function App() {
                   English.
                 </p>
                 <div className="action-row wrap">
-                  <button className="button secondary" disabled={busy} onClick={createInvite}>
+                  <button
+                    className="button secondary"
+                    disabled={busy}
+                    onClick={() => createInvite()}
+                  >
                     Create respondent link
+                  </button>
+                  <button
+                    className="button secondary"
+                    disabled={busy}
+                    onClick={() => createInvite(true)}
+                  >
+                    Create shared study link
                   </button>
                   <button className="button secondary" onClick={() => setScreen('team-results')}>
                     View all results
@@ -531,7 +539,9 @@ function App() {
                 {respondentLink && (
                   <>
                     <label className="label" htmlFor="respondent-link">
-                      Share this link with one respondent
+                      {sharedLink
+                        ? 'Share this study link with multiple respondents'
+                        : 'Share this link with one respondent'}
                     </label>
                     <input
                       id="respondent-link"
@@ -549,8 +559,9 @@ function App() {
                       </p>
                     )}
                     <p className="muted">
-                      One link per respondent. For team testing, share the reusable team link
-                      instead.
+                      {sharedLink
+                        ? 'Each browser gets its own study session. Returning in the same browser resumes that session.'
+                        : 'This invitation is for one respondent.'}
                     </p>
                     <a
                       href={respondentLink}
@@ -680,16 +691,6 @@ function App() {
         {screen === 'team-results' && role === 'team' && (
           <TeamResults token={context.current.team_key} onBack={() => setScreen('home')} />
         )}
-        {screen === 'loading' && (
-          <section className="card">
-            <p role="status">Loading your session…</p>
-            {!busy && (
-              <button className="button secondary" onClick={resume}>
-                Resume session
-              </button>
-            )}
-          </section>
-        )}
         {screen === 'block-intro' && (
           <section className="card setup-card top20">
             <div className="eyebrow">
@@ -705,7 +706,9 @@ function App() {
             <p>
               {state.dataset === 'quickdraw'
                 ? 'Type what you recognise in English. There are no answer choices.'
-                : 'Select the digit or item that best matches the image from the answer choices.'}
+                : state.dataset === 'fashion'
+                  ? 'Choose the clothing item or accessory that best matches the image.'
+                  : 'Choose the digit that best matches the image.'}
             </p>
             {state.dataset !== 'quickdraw' && (
               <p className="muted">
